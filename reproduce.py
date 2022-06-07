@@ -30,14 +30,14 @@ class Reproduce(object):
             torch.onnx.export(
             self.net,
             args=(rel_pos, hidden_states),
-            f='./net.onnx',
+            f='./onehot_net.onnx',
             input_names=['rel_pos', 'hidden_states'],
             output_names=['out'],
             opset_version=11
             )
 
     def __gather_replace_onehot__(self):
-        model = onnx.load("./net.onnx")
+        model = onnx.load("./onehot_net.onnx")
         graph = gs.import_onnx(model)
         for node in graph.nodes:
             if node.op == "OneHot":
@@ -51,16 +51,16 @@ class Reproduce(object):
                 node.inputs = []
                 node.o().o().outputs = []
         graph.cleanup().toposort()
-        onnx.save(gs.export_onnx(graph), "./new_net.onnx")
+        onnx.save(gs.export_onnx(graph), "./gather_net.onnx")
 
     def export_trt(self):
         self.__gather_replace_onehot__()
-        os.system('trtexec --onnx=./new_net.onnx --saveEngine=net.plan --verbose --noTF32')
+        os.system('trtexec --onnx=./gather_net.onnx --saveEngine=net.plan --verbose --noTF32')
 
 
     def infer(self):
         # export onnx and trt
-        if os.path.exists('./net.onnx') is False:
+        if os.path.exists('./onhot_net.onnx') is False:
             self.export_onnx()
             self.export_trt()
 
@@ -72,17 +72,17 @@ class Reproduce(object):
         torch_out = torch_out.detach().numpy()
 
         # onnx out
-        sess = onnxruntime.InferenceSession('./net.onnx')
-        onnx_out = sess.run([], {'rel_pos':self.rel_pos})
-        onnx_out = onnx_out[0]
+        sess = onnxruntime.InferenceSession('./onehot_net.onnx')
+        onehot_onnx_out = sess.run([], {'rel_pos':self.rel_pos})
+        onehot_onnx_out = onehot_onnx_out[0]
 
         # new onnx out
-        sess = onnxruntime.InferenceSession('./new_net.onnx')
-        new_onnx_out = sess.run([], {'rel_pos':self.rel_pos})
-        new_onnx_out = new_onnx_out[0]
+        sess = onnxruntime.InferenceSession('./gather_net.onnx')
+        gather_onnx_out = sess.run([], {'rel_pos':self.rel_pos})
+        gather_onnx_out = gather_onnx_out[0]
 
         # trt out
-        G_LOGGER = trt.Logger(trt.Logger.WARNING)
+        G_LOGGER = trt.Logger(trt.Logger.ERROR)
         runtime = trt.Runtime(G_LOGGER)
         engine_file = './net.plan'
         
@@ -108,36 +108,36 @@ class Reproduce(object):
         cuda.memcpy_dtoh(trt_out, d_o)
 
         # diff
-        print('torch and onnx diff begin\n')
+        print('torch and onehot_onnx diff begin\n')
         result = 'ok\n'
         try:
-            np.testing.assert_almost_equal(torch_out, onnx_out, 5)
+            np.testing.assert_almost_equal(torch_out, onehot_onnx_out, 5)
         except Exception as e:
             result = e
         print(result)
-        print('torch and onnx diff end\n')
+        print('torch and onehot_onnx diff end\n')
 
-        print('onnx and new onnx diff begin\n')
+        print('onehot_onnx and gather_onnx diff begin\n')
         result = 'ok\n'
         try:
-            np.testing.assert_almost_equal(onnx_out, new_onnx_out, 5)
+            np.testing.assert_almost_equal(onehot_onnx_out, gather_onnx_out, 5)
         except Exception as e:
             result = e
         print(result)
-        print('onnx and new onnx diff end\n')
+        print('onehot_onnx and gather_onnx diff end\n')
 
-        print('new onnx and trt diff begin\n')
+        print('gather_onnx and trt diff begin\n')
         result = 'ok\n'
         try:
-            np.testing.assert_almost_equal(new_onnx_out, trt_out, 5)
+            np.testing.assert_almost_equal(gather_onnx_out, trt_out, 5)
         except Exception as e:
             result = e
         print(result)
-        print('new onnx and trt diff end\n')
+        print('gather_onnx and trt diff end\n')
 
 if __name__ == '__main__':
     if len(sys.argv) != 1:
-        os.system('rm net.torch net.onnx')
+        os.system('rm net.torch onehot_net.onnx')
         print('clean\n')
         sys.exit()
     reproduce = Reproduce()
