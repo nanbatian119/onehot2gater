@@ -1,5 +1,5 @@
 import numpy as np
-from net import SimpleNet
+from net.simple_net import SimpleNet
 import torch
 import onnx
 import onnx_graphsurgeon as gs
@@ -8,22 +8,28 @@ import tensorrt as trt
 import pycuda.driver as cuda
 import numpy as np
 import pycuda.autoinit
+import onnxruntime
+import sys
 
-class Reproduce(self):
+class Reproduce(object):
 
     def __init__(self):
-        self.net = SimpleNet()
-        if os.path.exists('./net.torch') is False:
+        if os.path.exists('./net.torch') is True:
+            self.net = torch.load('./net.torch')
+        else:
+            self.net = SimpleNet()
             torch.save(self.net, './net.torch')
-        
+             
         self.rel_pos = np.load('./data/rel_pos.npy')
         self.hidden_states = np.load('./data/hidden_states.npy')
 
     def export_onnx(self):
+        rel_pos = torch.from_numpy(self.rel_pos)
+        hidden_states = torch.from_numpy(self.hidden_states)
         with torch.no_grad():
             torch.onnx.export(
             self.net,
-            args=(self.rel_pos, self.hidden_states),
+            args=(rel_pos, hidden_states),
             f='./net.onnx',
             input_names=['rel_pos', 'hidden_states'],
             output_names=['out'],
@@ -61,7 +67,8 @@ class Reproduce(self):
         # torch out
         rel_pos = torch.from_numpy(self.rel_pos)
         hidden_states = torch.from_numpy(self.hidden_states)
-        torch_out = self.SimpleNet(rel_pos, hidden_states)
+        net = torch.load('./net.torch')
+        torch_out = net(rel_pos, hidden_states)
         torch_out = torch_out.detach().numpy()
 
         # onnx out
@@ -102,16 +109,16 @@ class Reproduce(self):
 
         # diff
         print('torch and onnx diff begin\n')
-        result = 'ok'
+        result = 'ok\n'
         try:
-            np.testing.assert_almost_equal(out, onnx_out, 5)
+            np.testing.assert_almost_equal(torch_out, onnx_out, 5)
         except Exception as e:
             result = e
         print(result)
         print('torch and onnx diff end\n')
 
         print('onnx and new onnx diff begin\n')
-        result = 'ok'
+        result = 'ok\n'
         try:
             np.testing.assert_almost_equal(onnx_out, new_onnx_out, 5)
         except Exception as e:
@@ -120,7 +127,7 @@ class Reproduce(self):
         print('onnx and new onnx diff end\n')
 
         print('new onnx and trt diff begin\n')
-        result = 'ok'
+        result = 'ok\n'
         try:
             np.testing.assert_almost_equal(new_onnx_out, trt_out, 5)
         except Exception as e:
@@ -129,6 +136,10 @@ class Reproduce(self):
         print('new onnx and trt diff end\n')
 
 if __name__ == '__main__':
+    if len(sys.argv) != 1:
+        os.system('rm net.torch net.onnx')
+        print('clean\n')
+        sys.exit()
     reproduce = Reproduce()
     reproduce.infer()
     
